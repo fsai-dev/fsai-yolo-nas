@@ -2,6 +2,9 @@ from super_gradients.training.dataloaders.dataloaders import coco_detection_yolo
 from super_gradients.training.models.detection_models.pp_yolo_e import PPYoloEPostPredictionCallback
 from super_gradients.training.metrics import DetectionMetrics_050
 from super_gradients.training.losses import PPYoloELoss
+from super_gradients.common import MultiGPUMode
+from super_gradients.training.utils.distributed_training_utils import setup_device
+from super_gradients import init_trainer
 from super_gradients.training import Trainer
 from super_gradients.training import models
 import argparse
@@ -31,8 +34,8 @@ if __name__ == '__main__':
                     help="path to pre-trained model weight")
     ap.add_argument("-s", "--size", type=int, default=640,
                     help="input image size")
-    ap.add_argument("--gpus", action='store_true',
-                help="Run on all gpus")
+    ap.add_argument("--num_gpus", type=int, default=1
+                help="Gpu count")
     ap.add_argument("--cpu", action='store_true',
                 help="Run on CPU")
     
@@ -71,14 +74,17 @@ if __name__ == '__main__':
             break
         else:
             n += 1
-
+    
+    init_trainer()
     # Training on GPU or CPU
     if args['cpu']:
         print('[INFO] Training on \033[1mCPU\033[0m')
-        trainer = Trainer(experiment_name=name, ckpt_root_dir='runs', device='cpu')
-    elif args['gpus']:
+        setup_device(device='cpu')
+        trainer = Trainer(experiment_name=name, ckpt_root_dir='runs')
+    elif args['num_gpus'] > 1:
         print(f'[INFO] Training on GPU: \033[1m{torch.cuda.get_device_name()}\033[0m')
-        trainer = Trainer(experiment_name=name, ckpt_root_dir='runs', multi_gpu=args['gpus'])
+        setup_device(multi_gpu=MultiGPUMode.DISTRIBUTED_DATA_PARALLEL, num_gpus=args['num_gpus'])
+        trainer = Trainer(experiment_name=name, ckpt_root_dir='runs')
     else:
         print(f'[INFO] Training on GPU: \033[1m{torch.cuda.get_device_name()}\033[0m')
         trainer = Trainer(experiment_name=name, ckpt_root_dir='runs')
@@ -158,11 +164,12 @@ if __name__ == '__main__':
         ),
         "valid_metrics_list": [
             DetectionMetrics_050(
-                score_thres=0.1,
+                score_thres=0.5,
                 top_k_predictions=300,
                 # NOTE: num_classes needs to be defined here
                 num_cls=len(yaml_params['names']),
                 normalize_targets=True,
+                calc_best_score_thresholds=True,
                 post_prediction_callback=PPYoloEPostPredictionCallback(
                     score_threshold=0.01,
                     nms_top_k=1000,
@@ -189,10 +196,11 @@ if __name__ == '__main__':
     # Evaluating on Val Dataset
     eval_model = trainer.test(model=best_model,
                     test_loader=val_data,
-                    test_metrics_list=DetectionMetrics_050(score_thres=0.1, 
+                    test_metrics_list=DetectionMetrics_050(score_thres=0.5, 
                                                         top_k_predictions=300, 
                                                         num_cls=len(yaml_params['names']), 
                                                         normalize_targets=True, 
+                                                        calc_best_score_thresholds=True,
                                                         post_prediction_callback=PPYoloEPostPredictionCallback(score_threshold=0.01, 
                                                                                                                 nms_top_k=1000, 
                                                                                                                 max_predictions=300,                                                                              

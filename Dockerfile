@@ -1,10 +1,11 @@
 FROM nvidia/cuda:12.2.2-cudnn8-devel-ubuntu20.04
 
-# Volta - p3, Ampere - p4, Turing - g4
-ARG TORCH_CUDA_ARCH_LIST="Voltal;Turing"
+ENV TORCH_CUDA_ARCH_LIST="7.0 7.2 7.5 9.0 9.0a"
 ENV TORCH_NVCC_FLAGS="-Xfatbin -compress-all"
-ENV MKL_THREADING_LAYER GNU
-ENV DEBIAN_FRONTEND noninteractive
+ENV MKL_THREADING_LAYER="GNU"
+ENV DEBIAN_FRONTEND="noninteractive"
+
+ENV NO_ALBUMENTATIONS_UPDATE="1"
 
 RUN apt-get update && apt-get install -y \
     software-properties-common \
@@ -16,7 +17,8 @@ RUN apt-get update && apt-get install -y \
     wget \
     curl \
     ca-certificates curl ffmpeg libsm6 libxext6 \
-    git wget ninja-build protobuf-compiler libprotobuf-dev build-essential python3-opencv tmux nvidia-container-toolkit cmake \
+    nvidia-container-toolkit \
+    git wget ninja-build protobuf-compiler libprotobuf-dev build-essential python3-opencv tmux vim cmake \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 # Set Python 3.9 as the default python
@@ -32,19 +34,17 @@ ENV PATH="$PATH:/root/.local/bin"
 # Set the current working directory
 WORKDIR /home
 
-RUN \
-    # Upgrade pip
-    pip install --upgrade pip && \
-    # Create the input and output directories
-    mkdir -p data && \
-    mkdir -p yolo-nas-output
+RUN pip install --upgrade pip
 
 # set FORCE_CUDA because during `docker build` cuda is not accessible
 ENV FORCE_CUDA="1"
 
-RUN git clone https://github.com/Deci-AI/super-gradients.git super-gradients
+RUN git clone --depth 1 https://github.com/Deci-AI/super-gradients.git super-gradients
 RUN pip install --user -e super-gradients
 
-RUN pip install clearml pycocotools
-
 WORKDIR /home/super-gradients
+
+
+RUN pip install comet_ml pycocotools albumentations==1.4.18
+
+

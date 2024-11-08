@@ -1,19 +1,18 @@
 ## Setup
-- Create clearml.conf file in base repo dir and add credentials
+- Create .comet.config file in base repository dir and add credentials
 - Run `make build`
 
-
 ## Run
-- Run `make run`
+- Check Makefile for specific commands. Commands will differ depending on the machine this will be running on
 
 ### Train
-python train.py --name pylon_complex --data /home/data/bboxes/pylon_complex/data.yaml --batch 8 --worker 10 --epoch 300 --model yolo_nas_l --size 1024 --num_gpus 4
+python train.py --name pylon_complex --data /home/data/bboxes/pylon_complex/yolo/data.yaml --batch 24 --worker 8 --epoch 100 --num_gpus 4 --no_cache_indexing
 
-### Inference
-python inference.py --project_name 300_epoch --num_classes 1 --conf 0.5 --source /home/data/bboxes/pylon_complex/val.json --weight /home/yolo-nas-output/runs/pylon_complex/RUN_20240827_232659_396567/ckpt_latest.pth --save --hide
-
-# 300 epoch run: RUN_20240827_232659_396567
-# 100 epoch run: RUN_20240824_001613_199026
+### Parameters
+- H100 Gpu: 
+    - batch size: 24
+    - workers: 8
+    - no_cache_indexing argument
 
 
 

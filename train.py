@@ -1,3 +1,11 @@
+import argparse
+import comet_ml
+import torch
+import time
+import yaml
+import os
+from pathlib import Path
+
 from super_gradients.training.dataloaders.dataloaders import (
     coco_detection_yolo_format_train,
     coco_detection_yolo_format_val,
@@ -15,13 +23,6 @@ from super_gradients.training.utils.distributed_training_utils import setup_devi
 from super_gradients import init_trainer
 from super_gradients.training import Trainer
 from super_gradients.training import models
-import argparse
-import torch
-import time
-import yaml
-import os
-
-# from torchmetrics import F1Score, Precision, Recall
 
 
 def get_args():
@@ -36,45 +37,29 @@ def get_args():
         "-j", "--worker", type=int, default=8, help="Training number of workers"
     )
     ap.add_argument(
-        "-m",
-        "--model",
-        type=str,
-        default="yolo_nas_l",
-        choices=["yolo_nas_s", "yolo_nas_m", "yolo_nas_l"],
-        help="Model type (eg: yolo_nas_s)",
-    )
-    ap.add_argument(
         "-w",
         "--weight",
         type=str,
-        default="coco",
         help="path to pre-trained model weight",
     )
-    ap.add_argument("-s", "--size", type=int, default=1280, help="input image size")
+    ap.add_argument("-s", "--size", type=int, default=1024, help="input image size")
     ap.add_argument("--num_gpus", type=int, default=1, help="Gpu count")
+    ap.add_argument(
+        "--no_cache_indexing",
+        action="store_true",
+        help="Do not perform dataset cache indexing",
+    )
     ap.add_argument("--cpu", action="store_true", help="Run on CPU")
 
-    # train_params
-    ap.add_argument(
-        "--warmup_mode", type=str, default="LinearEpochLRWarmup", help="Warmup Mode"
-    )
-    ap.add_argument(
-        "--warmup_initial_lr", type=float, default=1e-6, help="Warmup Initial LR"
-    )
-    ap.add_argument("--lr_warmup_epochs", type=int, default=3, help="LR Warmup Epochs")
-    ap.add_argument("--initial_lr", type=float, default=5e-4, help="Inital LR")
-    ap.add_argument("--lr_mode", type=str, default="cosine", help="LR Mode")
-    ap.add_argument(
-        "--cosine_final_lr_ratio", type=float, default=0.1, help="Cosine Final LR Ratio"
-    )
-    ap.add_argument("--optimizer", type=str, default="SGD", help="Optimizer")
-    ap.add_argument("--weight_decay", type=float, default=0.0005, help="Weight Decay")
     args = vars(ap.parse_args())
     return args
 
 
 def train(args, save_dir, name, yaml_params):
     init_trainer()
+    base_data_dir = yaml_params["path"]
+    if base_data_dir.endswith("yolo"):
+        base_data_dir = base_data_dir[:-5]
 
     # Training on GPU or CPU
     if args["cpu"]:
@@ -90,6 +75,10 @@ def train(args, save_dir, name, yaml_params):
         setup_device(device="cuda")
     trainer = Trainer(experiment_name=name, ckpt_root_dir=save_dir)
 
+    if args["no_cache_indexing"]:
+        cache_indexing = False
+    else:
+        cache_indexing = True
     train_data = coco_detection_yolo_format_train(
         dataset_params={
             "data_dir": yaml_params["path"],
@@ -97,8 +86,13 @@ def train(args, save_dir, name, yaml_params):
             "labels_dir": yaml_params["train"],
             "classes": yaml_params["names"],
             "input_dim": (args["size"], args["size"]),
+            "ignore_empty_annotations": False,
+            "cache_annotations": cache_indexing,
         },
-        dataloader_params={"batch_size": args["batch"], "num_workers": args["worker"]},
+        dataloader_params={
+            "batch_size": args["batch"],
+            "num_workers": args["worker"],
+        },
     )
 
     val_data = coco_detection_yolo_format_val(
@@ -108,29 +102,34 @@ def train(args, save_dir, name, yaml_params):
             "labels_dir": yaml_params["val"],
             "classes": yaml_params["names"],
             "input_dim": (args["size"], args["size"]),
+            "ignore_empty_annotations": False,
+            "cache_annotations": cache_indexing,
         },
-        dataloader_params={"batch_size": args["batch"], "num_workers": args["worker"]},
+        dataloader_params={
+            "batch_size": args["batch"],
+            "num_workers": args["worker"],
+        },
     )
 
     model = models.get(
-        args["model"],
+        "yolo_nas_l",
         num_classes=len(yaml_params["names"]),
         pretrained_weights=args["weight"],
     )
 
     train_params = {
         # ENABLING SILENT MODE
-        "save_ckpt_epoch_list": [50, 100, 150, 200, 250, 300],
+        "save_ckpt_epoch_list": [35, 55, 65, 75, 85, 90],
         "silent_mode": False,
-        "average_best_models": True,
-        "warmup_mode": args["warmup_mode"],
-        "warmup_initial_lr": args["warmup_initial_lr"],
-        "lr_warmup_epochs": args["lr_warmup_epochs"],
-        "initial_lr": args["initial_lr"],
-        "lr_mode": args["lr_mode"],
-        "cosine_final_lr_ratio": args["cosine_final_lr_ratio"],
-        "optimizer": args["optimizer"],
-        "optimizer_params": {"weight_decay": args["weight_decay"]},
+        "average_best_models": False,
+        "warmup_mode": "LinearEpochLRWarmup",
+        "warmup_initial_lr": 1e-6,
+        "lr_warmup_epochs": 3,
+        "initial_lr": 5e-4,
+        "lr_mode": "cosine",
+        "cosine_final_lr_ratio": 0.1,
+        "optimizer": "SGD",
+        "optimizer_params": {"weight_decay": 0.0005},
         "zero_weight_decay_on_bias_and_bn": True,
         "ema": True,
         "ema_params": {"decay": 0.9, "decay_type": "threshold"},
@@ -157,7 +156,6 @@ def train(args, save_dir, name, yaml_params):
             },
             {"DetectionHSV": {"prob": 0.5, "hgain": 0.015, "sgain": 0.7, "vgain": 0.4}},
             {"DetectionHorizontalFlip": {"prob": 0.5}},
-            {"DetectionPaddedRescale": {"input_dim": [args["size"], args["size"]]}},
             {
                 "DetectionTargetsFormatTransform": {
                     "input_dim": [args["size"], args["size"]],
@@ -165,11 +163,12 @@ def train(args, save_dir, name, yaml_params):
                 }
             },
         ],
-        # ClearML
-        "sg_logger": "clearml_sg_logger",
+        # CometML
+        "sg_logger": "cometml_sg_logger",
         "sg_logger_params": {
             "project_name": "yolo-nas",
             "experiment_name": name,
+            "base_data_dir": base_data_dir,
             "checkpoints_dir_path": save_dir,
             "save_checkpoints_remote": True,
             "save_tensorboard_remote": False,
@@ -212,6 +211,9 @@ def train(args, save_dir, name, yaml_params):
         train_loader=train_data,
         valid_loader=val_data,
     )
+
+    checkpoint_root_dir = trainer.ckpt_root_dir
+    return checkpoint_root_dir
 
 
 def validate(args, name, save_dir, best_model, yaml_params):
@@ -306,7 +308,7 @@ def test(args, name, save_dir, best_model, yaml_params):
 
 
 def main():
-    save_dir = "/home/model-output/yolo-nas-output/runs"
+    save_dir = "/home/model-output/yolonas/runs"
     args = get_args()
     s_time = time.time()
 
@@ -316,19 +318,19 @@ def main():
         name = args["name"]
 
     if not os.path.exists(os.path.join(save_dir, name)):
-        os.makedirs(os.path.join(save_dir, name))
+        Path(os.path.join(save_dir, name)).mkdir(parents=True, exist_ok=True)
     print(f"[INFO] Checkpoints saved in \033[1m{os.path.join(save_dir, name)}\033[0m")
 
     yaml_params = yaml.safe_load(open(args["data"], "r"))
 
     # Training
-    train(args, save_dir, name, yaml_params)
+    checkpoint_root_dir = train(args, save_dir, name, yaml_params)
 
     # Load best model
     best_model = models.get(
         args["model"],
         num_classes=len(yaml_params["names"]),
-        checkpoint_path=os.path.join(save_dir, name, "ckpt_best.pth"),
+        checkpoint_path=os.path.join(checkpoint_root_dir, "ckpt_best.pth"),
     )
 
     # Evaluating on Val Dataset
@@ -344,4 +346,5 @@ def main():
 
 
 if __name__ == "__main__":
+    os.umask(0)
     main()

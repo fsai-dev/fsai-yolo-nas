@@ -1,12 +1,9 @@
 import os
 
+import torch
 from typing import Union, Any
-
 import numpy as np
 from PIL import Image
-import matplotlib.pyplot as plt
-import torch
-import comet_ml
 
 
 from super_gradients.common.abstractions.abstract_logger import get_logger
@@ -17,36 +14,22 @@ from super_gradients.common.sg_loggers.time_units import TimeUnit
 
 logger = get_logger(__name__)
 
+try:
+    import comet_ml
 
-def log_config(cfg, experiment):
-    """Traverse the Detectron Config graph and log the parameters
-
-    Args:
-        cfg (CfgNode): Detectron Config Node
-        experiment (comet_ml.Experiment): Comet ML Experiment object
-    """
-
-    def log_node(node, prefix):
-        if isinstance(node, dict):
-            experiment.log_parameters(node, prefix=prefix)
-        else:
-            experiment.log_parameter(name=prefix, value=node)
-            return
-
-        node_dict = dict(node)
-        for k, v in node_dict.items():
-            _prefix = f"{prefix}-{k}" if prefix else k
-            log_node(v, _prefix)
-
-    log_node(cfg, "")
+    _import_comet_ml_error = None
+except (ModuleNotFoundError, ImportError, NameError) as cometml_import_err:
+    logger.debug("Failed to import comet_ml")
+    _import_comet_ml_error = cometml_import_err
 
 
 @register_sg_logger("cometml_sg_logger")
-class CometmlSGLogger(BaseSGLogger):
+class CometMLSGLogger(BaseSGLogger):
     def __init__(
         self,
         project_name: str,
         experiment_name: str,
+        base_data_dir: str,
         storage_location: str,
         resumed: bool,
         training_params: dict,
@@ -92,28 +75,37 @@ class CometmlSGLogger(BaseSGLogger):
             monitor_system=False,
         )
 
-        self.setup(project_name, experiment_name)
-
+        self.base_data_dir = base_data_dir
         self.save_checkpoints = save_checkpoints_remote
         self.save_tensorboard = save_tensorboard_remote
         self.save_logs = save_logs_remote
 
+        if _import_comet_ml_error:
+            raise _import_comet_ml_error
+
+        comet_ml.login()
+        self.setup(project_name, experiment_name)
+
     @multi_process_safe
     def setup(self, project_name, experiment_name):
-        from multiprocessing.process import BaseProcess
-
-        # Prevent clearml modifying os.fork and BaseProcess.run, which can cause a DataLoader to crash (if num_worker > 0)
-        # Issue opened here: https://github.com/allegroai/clearml/issues/790
-        default_fork, default_run = os.fork, BaseProcess.run
-        self.experiment = comet_ml.Experiment(
-            api_key="2ce76zHmN70qw0PxxiQlywYWu",
-            project_name="yolo-nas",
-            workspace="fsai",
+        self.experiment = comet_ml.Experiment(project_name=project_name)
+        self.experiment.set_name(experiment_name)
+        self.experiment.log_asset(
+            file_data=os.path.join(self.base_data_dir, "annotation_stats.json")
+        )
+        self.experiment.log_asset(
+            file_data=os.path.join(self.base_data_dir, "val.json")
+        )
+        self.experiment.log_asset(
+            file_data=os.path.join(self.base_data_dir, "train.json")
+        )
+        self.experiment.log_asset(
+            file_data=os.path.join(self.base_data_dir, "class_names.yaml")
         )
 
     @multi_process_safe
     def add_config(self, tag: str, config: dict):
-        super(CometmlSGLogger, self).add_config(tag=tag, config=config)
+        super(CometMLSGLogger, self).add_config(tag=tag, config=config)
 
         def log_node(node, prefix):
             if isinstance(node, dict):
@@ -125,25 +117,6 @@ class CometmlSGLogger(BaseSGLogger):
         for k, v in config.items():
             log_node(v, k)
 
-
-    def __add_image(
-        self,
-        tag: str,
-        image: Union[torch.Tensor, np.array, Image.Image],
-        global_step: int,
-    ):
-        if isinstance(image, torch.Tensor):
-            image = image.cpu().detach().numpy()
-        if image.shape[0] < 5:
-            image = image.transpose([1, 2, 0])
-        self.clearml_logger.report_image(
-            title=tag,
-            series=tag,
-            image=image,
-            iteration=global_step,
-            max_image_history=-1,
-        )
-
     @multi_process_safe
     def add_image(
         self,
@@ -152,10 +125,14 @@ class CometmlSGLogger(BaseSGLogger):
         data_format="CHW",
         global_step: int = 0,
     ):
-        super(ClearMLSGLogger, self).add_image(
+        super(CometMLSGLogger, self).add_image(
             tag=tag, image=image, data_format=data_format, global_step=global_step
         )
-        self.__add_image(tag, image, global_step)
+        if isinstance(image, torch.Tensor):
+            image = image.cpu().detach().numpy()
+        if image.shape[0] < 5:
+            image = image.transpose([1, 2, 0])
+        self.experiment.log_image(image_data=image, name=tag, step=global_step)
 
     @multi_process_safe
     def add_images(
@@ -165,40 +142,48 @@ class CometmlSGLogger(BaseSGLogger):
         data_format="NCHW",
         global_step: int = 0,
     ):
-        super(ClearMLSGLogger, self).add_images(
+        super(CometMLSGLogger, self).add_images(
             tag=tag, images=images, data_format=data_format, global_step=global_step
         )
         for image in images:
-            self.__add_image(tag, image, global_step)
+            self.add_image(tag=tag, image=image, global_step=global_step)
 
+    @multi_process_safe
+    def add_scalar(
+        self, tag: str, scalar_value: float, global_step: Union[int, TimeUnit] = 0
+    ):
+        super(CometMLSGLogger, self).add_scalar(
+            tag=tag, scalar_value=scalar_value, global_step=global_step
+        )
+        if isinstance(global_step, TimeUnit):
+            global_step = global_step.get_value()
+        self.experiment.log_metric(
+            name=tag, value=scalar_value, step=global_step, epoch=global_step
+        )
+
+    @multi_process_safe
+    def add_scalars(self, tag_scalar_dict: dict, global_step: int = 0):
+        super(CometMLSGLogger, self).add_scalars(
+            tag_scalar_dict=tag_scalar_dict, global_step=global_step
+        )
+        self.experiment.log_metrics(
+            dic=tag_scalar_dict, step=global_step, epoch=global_step
+        )
 
     @multi_process_safe
     def close(self):
         super().close()
-        self.task.close()
+        self.experiment.end()
 
     @multi_process_safe
     def add_file(self, file_name: str = None):
         super().add_file(file_name)
-        self.task.upload_artifact(
-            name=file_name, artifact_object=os.path.join(self._local_dir, file_name)
-        )
+        self.experiment.log_asset(file_data=file_name, file_name=file_name)
 
     @multi_process_safe
     def upload(self):
         super().upload()
-
-        if self.save_tensorboard:
-            name = self._get_tensorboard_file_name().split("/")[-1]
-            self.task.upload_artifact(
-                name=name, artifact_object=self._get_tensorboard_file_name()
-            )
-
-        if self.save_logs:
-            name = self.experiment_log_path.split("/")[-1]
-            self.task.upload_artifact(
-                name=name, artifact_object=self.experiment_log_path
-            )
+        self.experiment.log_asset(file_data=self.experiment_log_path)
 
     @multi_process_safe
     def add_checkpoint(self, tag: str, state_dict: dict, global_step: int = 0):
@@ -212,11 +197,9 @@ class CometmlSGLogger(BaseSGLogger):
         torch.save(state_dict, path)
 
         if self.save_checkpoints:
-            if self.s3_location_available:
-                self.model_checkpoints_data_interface.save_remote_checkpoints_file(
-                    self.experiment_name, self._local_dir, name
-                )
-            self.task.upload_artifact(name=name, artifact_object=path)
+            self.experiment.log_model(
+                name="yolonas", file_or_folder=path, file_name=name
+            )
 
     def add(self, tag: str, obj: Any, global_step: int = None):
         pass

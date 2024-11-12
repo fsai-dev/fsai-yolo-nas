@@ -86,7 +86,8 @@ def train(args, save_dir, name, yaml_params):
             "labels_dir": yaml_params["train"],
             "classes": yaml_params["names"],
             "input_dim": (args["size"], args["size"]),
-            "ignore_empty_annotations": False,
+            # "ignore_empty_annotations": False,
+            "ignore_empty_annotations": True,
             "cache_annotations": cache_indexing,
         },
         dataloader_params={
@@ -102,7 +103,8 @@ def train(args, save_dir, name, yaml_params):
             "labels_dir": yaml_params["val"],
             "classes": yaml_params["names"],
             "input_dim": (args["size"], args["size"]),
-            "ignore_empty_annotations": False,
+            # "ignore_empty_annotations": False,
+            "ignore_empty_annotations": True,
             "cache_annotations": cache_indexing,
         },
         dataloader_params={
@@ -212,7 +214,7 @@ def train(args, save_dir, name, yaml_params):
         valid_loader=val_data,
     )
 
-    checkpoint_root_dir = trainer.ckpt_root_dir
+    checkpoint_root_dir = trainer.checkpoint_root_dir
     return checkpoint_root_dir
 
 
@@ -308,7 +310,7 @@ def test(args, name, save_dir, best_model, yaml_params):
 
 
 def main():
-    save_dir = "/home/model-output/yolonas/runs"
+    save_dir = "/home/model-output/yolonas"
     args = get_args()
     s_time = time.time()
 

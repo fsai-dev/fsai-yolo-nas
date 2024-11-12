@@ -74,7 +74,7 @@ class CometMLSGLogger(BaseSGLogger):
             save_logs_remote=self.s3_location_available,
             monitor_system=False,
         )
-
+        self.checkpoints_dir_path = self._local_dir
         self.base_data_dir = base_data_dir
         self.save_checkpoints = save_checkpoints_remote
         self.save_tensorboard = save_tensorboard_remote
@@ -105,6 +105,9 @@ class CometMLSGLogger(BaseSGLogger):
 
     @multi_process_safe
     def add_config(self, tag: str, config: dict):
+        config["training_hyperparams"]["sg_logger_params"][
+            "checkpoints_dir_path"
+        ] = self._local_dir
         super(CometMLSGLogger, self).add_config(tag=tag, config=config)
 
         def log_node(node, prefix):
@@ -178,12 +181,14 @@ class CometMLSGLogger(BaseSGLogger):
     @multi_process_safe
     def add_file(self, file_name: str = None):
         super().add_file(file_name)
-        self.experiment.log_asset(file_data=file_name, file_name=file_name)
+        self.experiment.log_asset(
+            file_data=file_name, file_name=file_name, overwrite=True
+        )
 
     @multi_process_safe
     def upload(self):
         super().upload()
-        self.experiment.log_asset(file_data=self.experiment_log_path)
+        self.experiment.log_asset(file_data=self.experiment_log_path, overwrite=True)
 
     @multi_process_safe
     def add_checkpoint(self, tag: str, state_dict: dict, global_step: int = 0):
@@ -198,7 +203,10 @@ class CometMLSGLogger(BaseSGLogger):
 
         if self.save_checkpoints:
             self.experiment.log_model(
-                name="yolonas", file_or_folder=path, file_name=name
+                name="yolonas",
+                file_or_folder=path,
+                file_name=name,
+                overwrite=True,
             )
 
     def add(self, tag: str, obj: Any, global_step: int = None):

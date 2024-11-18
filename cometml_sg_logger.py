@@ -90,17 +90,9 @@ class CometMLSGLogger(BaseSGLogger):
     def setup(self, project_name, experiment_name):
         self.experiment = comet_ml.Experiment(project_name=project_name)
         self.experiment.set_name(experiment_name)
-        self.experiment.log_asset(
-            file_data=os.path.join(self.base_data_dir, "annotation_stats.json")
-        )
-        self.experiment.log_asset(
-            file_data=os.path.join(self.base_data_dir, "val.json")
-        )
-        self.experiment.log_asset(
-            file_data=os.path.join(self.base_data_dir, "train.json")
-        )
-        self.experiment.log_asset(
-            file_data=os.path.join(self.base_data_dir, "class_names.yaml")
+        self.experiment.log_asset_folder(
+            folder=os.path.join(self.base_data_dir, "annotations"),
+            recursive=True,
         )
 
     @multi_process_safe

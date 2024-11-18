@@ -215,6 +215,7 @@ def train(args, save_dir, name, yaml_params):
     )
 
     checkpoint_root_dir = trainer.checkpoint_root_dir
+    # checkpoint_root_dir = trainer._local_dir
     return checkpoint_root_dir
 
 

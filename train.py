@@ -51,8 +51,7 @@ def get_args():
     )
     ap.add_argument("--cpu", action="store_true", help="Run on CPU")
 
-    args = vars(ap.parse_args())
-    return args
+    return ap.parse_args()
 
 
 def train(args, save_dir, name, yaml_params):
